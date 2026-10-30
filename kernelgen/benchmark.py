@@ -5,6 +5,12 @@ enforce the candidate policy, so use it only for trusted code. Untrusted
 (generated) code goes through kernelgen.sandbox.evaluate_isolated, which checks
 the policy and runs `evaluate` in a worker process under a wall-clock limit.
 
+`make benchmark` runs the template kernel for each of the 50 held-out tasks and
+writes results/kernel_benchmarks.csv: one row per task with the baseline time,
+the candidate time, the speedup, and the speedup over PyTorch's own op. These
+rows are the model-independent reference. Kernels written by the model are
+evaluated on the same tasks by kernelgen.evaluate_model.
+
 Usage:
     python -m kernelgen.benchmark --out results/kernel_benchmarks.csv
 """
@@ -12,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -25,10 +32,10 @@ from kernelgen.policy import PolicyViolation
 from kernelgen.reward import compute_reward
 from kernelgen.rows import FIELDS, environment_info, fail_row, new_row, one_line, write_csv
 from kernelgen.sandbox import DEFAULT_TIMEOUT_S, evaluate_isolated
-from kernelgen.tasks import TIMING_SEED, Task, default_tasks
+from kernelgen.tasks import TIMING_SEED, Task
 from kernelgen.timing import TimingVerificationError, benchmark_fresh, percentile
 
-__all__ = ["FIELDS", "KNOWN_KERNELS", "evaluate", "main", "run_known_kernels", "write_csv"]
+__all__ = ["FIELDS", "KNOWN_KERNELS", "evaluate", "main", "reference_candidates", "run_reference_kernels", "write_csv"]
 
 KNOWN_DIR = Path(__file__).parent / "known_kernels"
 # family -> (candidate_id, source file)
@@ -118,30 +125,49 @@ def evaluate(
     return row
 
 
-def run_known_kernels(
+def reference_candidates(
+    family: str | None = None, sample_only: bool = False
+) -> list[tuple[Task, str, str]]:
+    """The template kernel (default config) for each held-out task: (task, candidate_id, source).
+
+    These are the model-independent reference points of the benchmark: what a
+    hand-written template achieves on the held-out tasks, with no tuning.
+    `sample_only` keeps just the first held-out task of each family.
+    """
+    from kernelgen.families import all_families
+
+    out = []
+    for fam in all_families():
+        if family and fam.name != family:
+            continue
+        for params in fam.heldout_shapes[:1] if sample_only else fam.heldout_shapes:
+            config = fam.default_config(params)
+            candidate_id = f"template:{fam.name}:" + json.dumps(config, sort_keys=True, separators=(",", ":"))
+            out.append((fam.task(params), candidate_id, fam.render(params, config)))
+    return out
+
+
+def run_reference_kernels(
     device: str,
     warmup: int,
     reps: int,
     seeds: Sequence[int],
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    family: str | None = None,
+    limit: int | None = None,
+    progress=print,
 ) -> list[dict[str, Any]]:
     env = environment_info(device)
     rows = []
-    for task in default_tasks():
-        candidate_id, path = KNOWN_KERNELS[task.family]
-        rows.append(
-            evaluate_isolated(
-                task,
-                path.read_text(),
-                candidate_id,
-                device,
-                warmup=warmup,
-                reps=reps,
-                seeds=seeds,
-                env=env,
-                timeout_s=timeout_s,
-            )
+    candidates = reference_candidates(family)[:limit]
+    for i, (task, candidate_id, source) in enumerate(candidates, 1):
+        row = evaluate_isolated(
+            task, source, candidate_id, device,
+            warmup=warmup, reps=reps, seeds=seeds, env=env, timeout_s=timeout_s,
         )
+        rows.append(row)
+        speedup = "-" if row["speedup"] is None else f"{row['speedup']:.2f}x"
+        progress(f"[{i}/{len(candidates)}] {row['task']:<44} {row['status']:<9} {speedup:>8}")
     return rows
 
 
@@ -151,6 +177,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--reps", type=int, default=100)
     parser.add_argument("--seeds", type=int, default=3, help="number of correctness-gate inputs")
+    parser.add_argument("--family", default=None, help="only this family's held-out tasks")
+    parser.add_argument("--limit", type=int, default=None, help="only the first N tasks (a quick trial run)")
     parser.add_argument(
         "--timeout",
         type=float,
@@ -165,15 +193,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("error: no CUDA device available; refusing to write benchmark results", file=sys.stderr)
         return 2
 
-    device = "cuda"
-    rows = run_known_kernels(device, args.warmup, args.reps, range(args.seeds), args.timeout)
+    rows = run_reference_kernels(
+        "cuda", args.warmup, args.reps, range(args.seeds), args.timeout, args.family, args.limit
+    )
     write_csv(rows, args.out)
 
+    ok = [r for r in rows if r["status"] == "ok"]
+    print(f"wrote {len(rows)} rows to {args.out} on {rows[0]['gpu_name']}: {len(ok)} ok")
     for r in rows:
-        speedup = "-" if r["speedup"] is None else f"{r['speedup']:.2f}x"
-        print(f"{r['task']:<32} {r['candidate_id']:<24} {r['status']:<10} {speedup:>8}  {r['error']}")
-    print(f"wrote {len(rows)} rows to {args.out} on {rows[0]['gpu_name']}")
-    return 0 if all(r["status"] == "ok" for r in rows) else 1
+        if r["status"] != "ok":
+            print(f"NOT OK  {r['task']}: {r['status']}: {r['error']}")
+    return 0 if len(ok) == len(rows) else 1
 
 
 if __name__ == "__main__":

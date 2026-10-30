@@ -1,7 +1,7 @@
 PYTHON ?= python3
 RESULTS := results
 
-.PHONY: install test benchmark profile dataset annotate verify-dataset sft rl
+.PHONY: install test benchmark profile dataset annotate verify-dataset sft rl eval-model nsight
 
 # Run inside an activated virtualenv, e.g.:
 #   python3 -m venv .venv && . .venv/bin/activate
@@ -12,8 +12,10 @@ install:
 test:
 	$(PYTHON) -m pytest tests -v -ra
 
+# The template kernel for each of the 50 held-out tasks, measured on the GPU. Writes
+# results/kernel_benchmarks.csv. Quick trial: make benchmark BENCH_ARGS="--limit 3"
 benchmark:
-	$(PYTHON) -m kernelgen.benchmark --out $(RESULTS)/kernel_benchmarks.csv
+	$(PYTHON) -m kernelgen.benchmark --out $(RESULTS)/kernel_benchmarks.csv $(BENCH_ARGS)
 
 # Rebuild data/kernels.jsonl and data/heldout_tasks.json from the family templates (no GPU needed).
 dataset:
@@ -38,6 +40,19 @@ sft:
 # Extra flags: make rl RL_ARGS="--steps 50 --group-size 4"
 rl:
 	$(PYTHON) -m kernelgen.rl --init-adapter runs/sft/final --out runs/rl $(RL_ARGS)
+
+# Kernels written by a model, measured on the 50 held-out tasks. Writes results/generated_<TAG>.csv,
+# the replies, and a summary. The untuned base model: make eval-model TAG=base
+#   make eval-model TAG=sft ADAPTER=runs/sft/final
+#   make eval-model TAG=rl ADAPTER=runs/rl/final
+TAG ?= model
+eval-model:
+	$(PYTHON) -m kernelgen.evaluate_model --tag $(TAG) $(if $(ADAPTER),--adapter $(ADAPTER)) $(EVAL_ARGS)
+
+# Optional Nsight Compute / Nsight Systems profiles. Never fails if the tools are missing or
+# unusable (common under WSL2); results/nsight/STATUS.json records what happened.
+nsight:
+	$(PYTHON) -m kernelgen.nsight --out $(RESULTS)/nsight
 
 # Kernel time and effective memory bandwidth via torch.profiler. Pass the
 # card's spec bandwidth if known: make profile PEAK_GBPS=<GB/s>

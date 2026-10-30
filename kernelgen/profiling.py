@@ -38,7 +38,7 @@ from typing import Any, Callable, Sequence
 import torch
 from torch.profiler import ProfilerActivity, profile
 
-from kernelgen.benchmark import KNOWN_KERNELS
+from kernelgen.benchmark import KNOWN_KERNELS, reference_candidates
 from kernelgen.candidate import load_candidate
 from kernelgen.correctness import check_correctness
 from kernelgen.policy import PolicyViolation
@@ -257,8 +257,17 @@ def profile_job(request: dict[str, Any]) -> dict[str, Any]:
         return fail_profile_row(row, "error", f"{type(exc).__name__}: {exc}")
 
 
+def profile_targets(scope: str) -> list[tuple[Task, str, str]]:
+    """(task, candidate_id, source) to profile. `sample`: the first held-out task of each family;
+    `all`: all 50 held-out tasks; `known`: the hand-written layernorm kernel on three layernorm tasks."""
+    if scope == "known":
+        return [(t, KNOWN_KERNELS[t.family][0], KNOWN_KERNELS[t.family][1].read_text()) for t in default_tasks()]
+    return reference_candidates(sample_only=(scope == "sample"))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--scope", choices=("sample", "all", "known"), default="sample")
     parser.add_argument("--out", default="results/profile_summary.csv")
     parser.add_argument("--trace-dir", default="results/traces", help="where Chrome traces are written")
     parser.add_argument("--no-trace", action="store_true", help="do not keep Chrome trace files")
@@ -278,9 +287,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     device = "cuda"
     env = environment_info(device)
     rows: list[dict[str, Any]] = []
-    for task in default_tasks():
-        candidate_id, path = KNOWN_KERNELS[task.family]
-        runs = (("baseline", "pytorch_baseline", None), ("candidate", candidate_id, path.read_text()))
+    for task, candidate_id, candidate_source in profile_targets(args.scope):
+        runs = (("baseline", "pytorch_baseline", None), ("candidate", candidate_id, candidate_source))
         for impl, cid, source in runs:
             trace_path = None if args.no_trace else Path(args.trace_dir) / f"{task.name}__{impl}.json"
             rows.append(

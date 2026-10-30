@@ -7,6 +7,7 @@ status is one of:
     rejected   violated the candidate policy (see kernelgen.policy)
     timeout    exceeded the wall-clock limit and was killed
     crash      the worker process died without reporting a result
+    no_code    a model reply that contained no complete code block defining solution()
 """
 
 from __future__ import annotations
