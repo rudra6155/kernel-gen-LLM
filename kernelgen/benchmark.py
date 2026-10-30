@@ -25,12 +25,10 @@ from kernelgen.policy import PolicyViolation
 from kernelgen.reward import compute_reward
 from kernelgen.rows import FIELDS, environment_info, fail_row, new_row, one_line, write_csv
 from kernelgen.sandbox import DEFAULT_TIMEOUT_S, evaluate_isolated
-from kernelgen.tasks import Task, default_tasks
+from kernelgen.tasks import TIMING_SEED, Task, default_tasks
 from kernelgen.timing import benchmark_pair, percentile
 
 __all__ = ["FIELDS", "KNOWN_KERNELS", "evaluate", "main", "run_known_kernels", "write_csv"]
-
-TIMING_SEED = 1234
 
 KNOWN_DIR = Path(__file__).parent / "known_kernels"
 # family -> (candidate_id, source file)

@@ -50,6 +50,38 @@ FIELDS = [
 ]
 
 
+PROFILE_FIELDS = [
+    "task",
+    "family",
+    "params",
+    "dtype",
+    "impl",
+    "candidate_id",
+    "status",
+    "bytes_moved",
+    "iters",
+    "event_ms",
+    "kernel_ms_per_iter",
+    "kernel_launches_per_iter",
+    "effective_gbps",
+    "copy_gbps",
+    "pct_of_copy_bw",
+    "peak_gbps",
+    "pct_of_peak",
+    "top_kernels",
+    "trace_file",
+    "gpu_name",
+    "torch_version",
+    "cuda_version",
+    "triton_version",
+    "error",
+]
+
+# Profile row status is one of the statuses above, plus:
+#     suspect    profiled, but kernel time exceeds the CUDA-event time, so the
+#                bandwidth figure cannot be trusted (see kernelgen.profiling)
+
+
 def environment_info(device: str) -> dict[str, str]:
     try:
         import triton
@@ -107,11 +139,46 @@ def fail_row(row: dict[str, Any], status: str, error: str) -> dict[str, Any]:
     return row
 
 
-def write_csv(rows: Sequence[dict[str, Any]], path: str | Path) -> None:
+def new_profile_row(
+    task: Task,
+    impl: str,
+    candidate_id: str,
+    iters: int,
+    env: dict[str, str],
+    peak_gbps: float | None = None,
+) -> dict[str, Any]:
+    """A profile row that has not produced any measurement yet."""
+    row: dict[str, Any] = {name: None for name in PROFILE_FIELDS}
+    row.update(
+        task=task.name,
+        family=task.family,
+        params=json.dumps(task.params, sort_keys=True),
+        dtype=str(task.dtype).removeprefix("torch."),
+        impl=impl,
+        candidate_id=candidate_id,
+        status="error",
+        bytes_moved=task.bytes_moved,
+        iters=iters,
+        peak_gbps=peak_gbps,
+        error="",
+    )
+    row.update(env)
+    return row
+
+
+def fail_profile_row(row: dict[str, Any], status: str, error: str) -> dict[str, Any]:
+    row["status"] = status
+    row["error"] = one_line(error)
+    return row
+
+
+def write_csv(
+    rows: Sequence[dict[str, Any]], path: str | Path, fields: Sequence[str] = FIELDS
+) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="raise")
+        writer = csv.DictWriter(f, fieldnames=list(fields), extrasaction="raise")
         writer.writeheader()
         for row in rows:
             writer.writerow({k: ("" if v is None else v) for k, v in row.items()})

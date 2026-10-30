@@ -7,6 +7,9 @@ from typing import Any, Callable
 
 import torch
 
+# Seed for the inputs used when timing or profiling (the correctness gate uses others).
+TIMING_SEED = 1234
+
 
 @dataclass(frozen=True, eq=False)
 class Task:
@@ -14,6 +17,10 @@ class Task:
     family: str
     params: dict[str, Any]
     dtype: torch.dtype
+    # Minimum bytes any implementation must move through memory for one call:
+    # every input read once and every output written once. Effective bandwidth
+    # is this divided by kernel time; it is not measured DRAM traffic.
+    bytes_moved: int
     # (seed, device) -> positional arguments for both reference and candidate
     make_inputs: Callable[[int, str], tuple]
     # The PyTorch baseline. Speedup is measured against this function.
@@ -39,11 +46,13 @@ def layernorm_task(m: int, n: int, dtype: torch.dtype = torch.float32) -> Task:
         return x, weight, bias
 
     dtype_tag = str(dtype).removeprefix("torch.")
+    elem = torch.empty((), dtype=dtype).element_size()
     return Task(
         name=f"layernorm_M{m}_N{n}_{dtype_tag}",
         family="layernorm",
         params={"M": m, "N": n},
         dtype=dtype,
+        bytes_moved=(2 * m * n + 2 * n) * elem,  # read x, write y, read weight and bias
         make_inputs=make_inputs,
         reference=_naive_layernorm,
         baseline_desc="eager PyTorch LayerNorm from mean/sub/pow/sqrt/div/mul/add ops",

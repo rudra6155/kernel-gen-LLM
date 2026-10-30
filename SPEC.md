@@ -80,7 +80,21 @@ timeout is a starting value, not a measured one.
    known-optimized kernel beats a naive PyTorch baseline.
 5. **Profiling.** `torch.profiler` traces are the primary profiling output.
    Nsight Compute (`ncu`) and Nsight Systems (`nsys`) are optional, because
-   their support under WSL2 is not guaranteed.
+   their support under WSL2 is not guaranteed. `make profile` profiles the
+   PyTorch baseline and the candidate for each task and writes
+   `results/profile_summary.csv` plus a Chrome trace per run in
+   `results/traces/`. The summary reports kernel time, kernel launches per call,
+   and effective bandwidth.
+   - Effective bandwidth is the task's minimum traffic (every input read once,
+     every output written once) divided by GPU kernel time from the trace. It is
+     not measured DRAM traffic; that needs `ncu`.
+   - No peak bandwidth is assumed. Each run also measures a device-to-device
+     copy on the same GPU as an empirical reference, and `--peak-gbps` takes the
+     card's spec value if known.
+   - Each run is also timed with CUDA events outside the profiler. A run whose
+     kernel time exceeds that is marked `suspect`.
+   - A candidate is profiled only after it passes the policy and correctness
+     gates, and runs in the same worker process as the benchmark.
 6. **`CLAIMS.md`.** A ledger of every claim. Every speedup number points to a row
    in `results/kernel_benchmarks.csv`.
 
