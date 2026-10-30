@@ -1,7 +1,7 @@
 PYTHON ?= python3
 RESULTS := results
 
-.PHONY: install test benchmark profile dataset annotate verify-dataset
+.PHONY: install test benchmark profile dataset annotate verify-dataset sft
 
 # Run inside an activated virtualenv, e.g.:
 #   python3 -m venv .venv && . .venv/bin/activate
@@ -27,6 +27,11 @@ annotate:
 # Add REMEASURE=<n> to re-measure n annotated kernels on the GPU.
 verify-dataset:
 	$(PYTHON) -m kernelgen.verify_dataset $(if $(REMEASURE),--remeasure $(REMEASURE))
+
+# QLoRA fine-tuning on the annotated kernels (needs data/annotations.jsonl and the GPU).
+# Logs loss and generated samples per epoch under runs/sft/. Extra flags: make sft SFT_ARGS="--epochs 2"
+sft:
+	$(PYTHON) -m kernelgen.finetune --out runs/sft $(SFT_ARGS)
 
 # Kernel time and effective memory bandwidth via torch.profiler. Pass the
 # card's spec bandwidth if known: make profile PEAK_GBPS=<GB/s>
