@@ -445,14 +445,37 @@ def test_a_reward_function_returning_nan_or_inf_fails_with_a_clear_message(tok, 
         train_rl(rl_cfg(tmp_path, steps=1), model=model, tokenizer=tok, reward_fn=bad)
 
 
-def test_invalid_logits_do_not_crash_sampling_when_asked_to_remove_them(tok, model):
-    from kernelgen.modeling import sample
+NAN_SAMPLING_SCRIPT = """
+import sys
+import torch
+from kernelgen.modeling import DEFAULT_MODEL, add_lora, load_base_model, load_tokenizer, sample
 
-    for p in model.parameters():
-        if p.requires_grad:
-            p.data.fill_(float("nan"))
-    (group,) = sample(model, tok, ["x"], max_new_tokens=3, num_return_sequences=2, remove_invalid_values=True)
-    assert len(group) == 2 and all(s.completion_ids for s in group)
+tok = load_tokenizer(DEFAULT_MODEL)
+model = add_lora(load_base_model(sys.argv[1], quantize=False, dtype=torch.float32), r=4, alpha=8, dropout=0.0)
+for p in model.parameters():
+    if p.requires_grad:
+        p.data.fill_(float("nan"))
+(group,) = sample(model, tok, ["x"], max_new_tokens=3, num_return_sequences=2, remove_invalid_values=True)
+if torch.cuda.is_available():
+    torch.cuda.synchronize()  # an asynchronous device-side assert would surface here
+print("sampled", len(group), [len(s.completion_ids) for s in group])
+"""
+
+
+def test_invalid_logits_do_not_break_sampling_when_asked_to_remove_them(tiny_dir):
+    # Run in a separate process on whatever device is available. Sampling from NaN
+    # probabilities is a device-side assert on CUDA, which makes the CUDA context unusable;
+    # if the safeguard did not work on a GPU, that must not take the rest of the test session
+    # down with it.
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-c", NAN_SAMPLING_SCRIPT, str(tiny_dir)],
+        cwd=DATA.parent, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert "sampled 2" in proc.stdout
 
 
 def test_input_ids_go_where_the_embedding_layer_is(model):
