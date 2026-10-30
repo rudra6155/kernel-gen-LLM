@@ -1,7 +1,7 @@
 PYTHON ?= python3
 RESULTS := results
 
-.PHONY: install test benchmark profile dataset annotate verify-dataset sft rl eval-model nsight
+.PHONY: install test benchmark profile dataset annotate verify-dataset sft rl eval-model nsight collect-logs claims claims-check status
 
 # Run inside an activated virtualenv, e.g.:
 #   python3 -m venv .venv && . .venv/bin/activate
@@ -58,3 +58,19 @@ nsight:
 # card's spec bandwidth if known: make profile PEAK_GBPS=<GB/s>
 profile:
 	$(PYTHON) -m kernelgen.profiling --out $(RESULTS)/profile_summary.csv --trace-dir $(RESULTS)/traces $(if $(PEAK_GBPS),--peak-gbps $(PEAK_GBPS))
+
+# Copy the small training logs from runs/ to results/training/ so they can be committed (adapters stay local).
+collect-logs:
+	$(PYTHON) -m kernelgen.collect_logs
+
+# Regenerate CLAIMS.md from the claim definitions and the CSVs they point to.
+claims:
+	$(PYTHON) -m kernelgen.claims --write
+
+# Fail if CLAIMS.md is stale. make claims-check STRICT=1 also fails unless every claim is VERIFIED.
+claims-check:
+	$(PYTHON) -m kernelgen.claims --check $(if $(STRICT),--require-verified)
+
+# The Definition of Done checklist, computed from the repository. Add --run-tests via STATUS_ARGS.
+status:
+	$(PYTHON) -m kernelgen.status $(STATUS_ARGS)
