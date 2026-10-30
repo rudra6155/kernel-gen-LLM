@@ -7,6 +7,7 @@ from typing import Callable, Sequence
 
 import torch
 
+from kernelgen.policy import NativeOpGuard, PolicyViolation
 from kernelgen.tasks import Task
 
 
@@ -33,11 +34,14 @@ def check_correctness(
     fn: Callable,
     device: str,
     seeds: Sequence[int] = (0, 1, 2),
+    forbid_native_ops: bool = False,
 ) -> CorrectnessResult:
     """Run `fn` and the reference on a fresh input per seed and compare.
 
     Exceptions raised by `fn` are not caught here, so the caller can tell a
-    crash from a wrong answer.
+    crash from a wrong answer. With `forbid_native_ops`, only `fn` runs under
+    NativeOpGuard (the reference does not), and PolicyViolation is raised if it
+    triggered any aten op that computes.
     """
     worst = 0.0
     for seed in seeds:
@@ -45,7 +49,14 @@ def check_correctness(
         snapshot = _clone(inputs)
         expected = task.reference(*inputs)
 
-        out = fn(*inputs)
+        guard = NativeOpGuard()
+        if forbid_native_ops:
+            with guard:
+                out = fn(*inputs)
+            if guard.violations:
+                raise PolicyViolation(guard.violations)
+        else:
+            out = fn(*inputs)
         if device.startswith("cuda"):
             torch.cuda.synchronize()
 

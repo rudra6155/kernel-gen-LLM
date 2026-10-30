@@ -50,6 +50,17 @@ def test_failing_candidate_is_reported_as_error(source, message):
     assert "\n" not in row["error"]
 
 
+def test_native_ops_are_rejected_when_forbidden():
+    row = evaluate(
+        TASK, sources.LIBRARY, "c", "cpu", warmup=1, reps=5, seeds=(0, 1), env=ENV, forbid_native_ops=True
+    )
+    assert row["status"] == "rejected"
+    assert row["correct"] == 0
+    assert row["speedup"] is None and row["candidate_ms"] is None
+    assert row["reward"] == 0.0
+    assert "native_layer_norm" in row["error"]
+
+
 def test_csv_round_trip(tmp_path):
     rows = [run(sources.LIBRARY, "good"), run(sources.MISSING_BIAS, "bad")]
     out = tmp_path / "nested" / "kernel_benchmarks.csv"

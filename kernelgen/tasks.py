@@ -54,3 +54,21 @@ def layernorm_task(m: int, n: int, dtype: torch.dtype = torch.float32) -> Task:
 
 def default_tasks() -> list[Task]:
     return [layernorm_task(4096, n) for n in (1024, 2048, 4096)]
+
+
+def task_spec(task: Task) -> dict[str, Any]:
+    """JSON-serializable description from which `task_from_spec` rebuilds the task."""
+    return {
+        "family": task.family,
+        "params": task.params,
+        "dtype": str(task.dtype).removeprefix("torch."),
+    }
+
+
+def task_from_spec(spec: dict[str, Any]) -> Task:
+    """Rebuild a task in another process. Tasks hold closures, so they are not picklable."""
+    dtype = getattr(torch, spec["dtype"])
+    params = spec["params"]
+    if spec["family"] == "layernorm":
+        return layernorm_task(params["M"], params["N"], dtype)
+    raise ValueError(f"unknown task family: {spec['family']!r}")

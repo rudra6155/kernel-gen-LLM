@@ -36,6 +36,34 @@ correct = 1 if the candidate compiles, runs, and matches the PyTorch
 - No clipping, normalization, or baseline subtraction is part of the reward as
   specified. If any is added later, it is documented here and in `CLAIMS.md`.
 
+## Candidate rules
+
+A candidate is one Python source file that defines `solution(...)` and at least
+one `@triton.jit` kernel that `solution` launches. The harness enforces this in
+three layers, so that speedup can only come from the generated kernel:
+
+1. **Static check** (`kernelgen/policy.py`, runs before any candidate code
+   executes). Imports are limited to `torch`, `triton`, `triton.language`,
+   `math`, `typing`, and `functools`. Host code may use `torch` only for
+   allocation, dtypes, and device queries, and a fixed set of tensor methods
+   (views, casts, metadata). Everything else (`torch.matmul`, `torch.nn`,
+   `x.mean()`, `x @ w`, `getattr`, `exec`, dunder access) is rejected.
+2. **Native-op guard** (same module, runs during the correctness check). Records
+   every aten op the candidate triggers and rejects any that computes. This
+   catches what the static check cannot see, such as `x * w + b` on tensors.
+3. **Process isolation** (`kernelgen/sandbox.py`). Each candidate runs in its own
+   worker process with a wall-clock limit. A hang, crash, or exit becomes a row
+   with status `timeout` or `crash` and reward 0; the run continues.
+
+Rows that fail these checks have status `rejected`, `timeout`, or `crash` and
+reward 0. They are written to the CSV like any other row.
+
+Known limits: this is a policy filter, not a security sandbox. It does not
+detect memoizing results between calls or behaving differently while being
+timed. The allowlists were written without seeing real model output, and will be
+widened only when a legitimate kernel is wrongly rejected. The 120 s default
+timeout is a starting value, not a measured one.
+
 ## Deliverables
 
 1. **Dataset.** 500-2000 kernels, each annotated with correctness and measured
@@ -82,6 +110,7 @@ evidence of anything.
 
 ## Not yet decided
 
+- Whether CUDA C++ candidates are in scope. The harness currently accepts Triton only.
 - Task families beyond GEMM, attention, and layernorm.
 - Whether GRPO fits in 8 GB VRAM at the intended group size (not measured).
 - Whether `ncu` / `nsys` work under this WSL2 setup (not checked).
