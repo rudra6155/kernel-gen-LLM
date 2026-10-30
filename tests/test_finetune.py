@@ -8,6 +8,7 @@ sampling, 4-bit loading and LoRA). It does not check that the 3B model fits in
 
 import csv
 import json
+import statistics
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,7 @@ from kernelgen.finetune import (
     split_by_task,
     train,
 )
-from kernelgen.modeling import DEFAULT_MODEL, add_lora, load_adapter, load_base_model, load_tokenizer, sample
+from kernelgen.modeling import DEFAULT_MODEL, add_lora, input_device, load_adapter, load_base_model, load_tokenizer, sample
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 RECORDS = read_jsonl(DATA / "kernels.jsonl")
@@ -262,16 +263,18 @@ def test_training_reduces_the_loss_on_a_tiny_dataset(tok, tiny_model, tmp_path):
     result = train(cfg, model=tiny_model, tokenizer=tok)
     losses = [e["train_loss"] for e in result["epochs"]]
     # A random 32-dimensional model with frozen embeddings can only fit so much through
-    # rank-4 adapters (about 11.91 -> 11.82 here), so this checks a steady, clear decrease.
-    assert losses[-1] < losses[0] - 0.05, losses
-    assert all(b <= a + 0.02 for a, b in zip(losses, losses[1:])), losses
+    # rank-4 adapters (about 11.91 -> 11.82 on CPU), so this checks a clear downward trend.
+    # It compares the first two epochs with the last two rather than demanding that every
+    # epoch improve, because on a GPU the loop runs under bf16 autocast, which adds jitter.
+    early, late = statistics.fmean(losses[:2]), statistics.fmean(losses[-2:])
+    assert late < early - 0.03, losses
 
 
 def test_saved_adapter_reproduces_the_trained_model(tok, tiny_model, tiny_dir, tmp_path):
     kernels, _ = small_kernels(tmp_path)
     train(tiny_cfg(tmp_path, kernels, epochs=1), model=tiny_model, tokenizer=tok)
     reloaded = load_adapter(load_base_model(str(tiny_dir), quantize=False, dtype=torch.float32), tmp_path / "run" / "final")
-    ids = torch.randint(0, 1000, (1, 24))
+    ids = torch.randint(0, 1000, (1, 24), device=input_device(tiny_model))  # on the model's device: CUDA on a GPU machine
     tiny_model.eval()
     reloaded.eval()
     assert torch.allclose(tiny_model(input_ids=ids).logits, reloaded(input_ids=ids).logits, atol=1e-5)
@@ -317,7 +320,7 @@ def test_4bit_model_gets_lora_and_trains_one_step(tiny_dir, tok):
     kinds = {type(m).__name__ for m in model.modules()}
     assert "Linear4bit" in kinds
     peft_model = add_lora(model, r=4, alpha=8, dropout=0.0)
-    ids = torch.randint(0, 1000, (1, 16))
+    ids = torch.randint(0, 1000, (1, 16), device=input_device(peft_model))
     loss = peft_model(input_ids=ids, labels=ids).loss
     loss.backward()
     trainable = [(n, p) for n, p in peft_model.named_parameters() if p.requires_grad]
@@ -353,3 +356,36 @@ def test_sample_restores_the_training_mode(tok, tiny_dir):
     model.eval()
     sample(model, tok, ["x"], max_new_tokens=2, greedy=True)
     assert not model.training
+
+
+# --- the dry run ----------------------------------------------------------------------------------------------------------
+
+
+def test_dry_run_reports_what_training_would_use_without_loading_a_model(tok, tmp_path, monkeypatch):
+    monkeypatch.setattr(finetune, "load_base_model", lambda *a, **k: (_ for _ in ()).throw(AssertionError("loaded a model")))
+    r, anns = RECORDS[:40], []
+    for i, rec in enumerate(r):
+        anns.append(annotation(rec, speedup=2.0 + i / 10) if i % 4 else annotation(rec, status="incorrect"))
+    write_jsonl(anns, tmp_path / "a.jsonl")
+    cfg = SFTConfig(kernels=str(DATA / "kernels.jsonl"), annotations=str(tmp_path / "a.jsonl"), grad_accum=4, epochs=3)
+    stats = finetune.dry_run(cfg, tok)
+    assert stats["examples"] == 30  # 40 annotated, 10 of them incorrect
+    assert stats["train"] + stats["val"] == 30 and stats["dropped_too_long"] == 0
+    assert stats["unmeasured_examples"] == 0 and stats["speedup_min_median_max"][0] >= 2.0
+    assert sum(stats["per_family"].values()) == 30
+    assert stats["optimizer_steps_per_epoch"] == -(-stats["train"] // 4) and stats["optimizer_steps_total"] == 3 * stats["optimizer_steps_per_epoch"]
+    assert 0 < stats["longest_example_tokens"] <= cfg.max_seq_len
+
+
+def test_dry_run_command_line_prints_json_and_needs_no_gpu(tok, tmp_path, capsys):
+    write_jsonl([annotation(RECORDS[0], speedup=3.0), annotation(RECORDS[1], speedup=1.5)], tmp_path / "a.jsonl")
+    code = finetune.main(["--annotations", str(tmp_path / "a.jsonl"), "--dry-run", "--out", str(tmp_path / "run")])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0 and out["examples"] == 2 and not (tmp_path / "run").exists()
+
+
+def test_dry_run_says_so_when_nothing_would_be_trained_on(tok, tmp_path):
+    write_jsonl([annotation(RECORDS[0], speedup=0.5)], tmp_path / "a.jsonl")
+    cfg = SFTConfig(kernels=str(DATA / "kernels.jsonl"), annotations=str(tmp_path / "a.jsonl"))
+    with pytest.raises(ValueError, match="no training examples"):
+        finetune.dry_run(cfg, tok)

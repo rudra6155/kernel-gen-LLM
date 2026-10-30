@@ -32,7 +32,7 @@ import torch
 
 from kernelgen.annotate import load_annotations
 from kernelgen.dataset import read_jsonl
-from kernelgen.modeling import DEFAULT_MODEL, add_lora, load_base_model, load_tokenizer, sample
+from kernelgen.modeling import DEFAULT_MODEL, add_lora, input_device, load_base_model, load_tokenizer, sample
 from kernelgen.policy import check_source
 from kernelgen.prompts import build_prompt, extract_code, format_response, to_messages
 
@@ -167,6 +167,45 @@ def lr_at(step: int, total_steps: int, base_lr: float, warmup_steps: int) -> flo
     return base_lr * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(progress, 1.0))))
 
 
+def prepare_data(cfg: SFTConfig, tokenizer) -> dict[str, Any]:
+    """Select, split, and tokenize the training data, with statistics about what was kept."""
+    examples = load_sft_examples(cfg.kernels, cfg.annotations, cfg.min_speedup, cfg.include_unannotated)
+    train_ex, val_ex = split_by_task(examples, cfg.val_fraction, cfg.seed)
+    if not train_ex:
+        raise ValueError(
+            f"no training examples left from {len(examples)} candidates; lower --min-speedup "
+            "or annotate more kernels"
+        )
+    train_feats = [f for f in (build_features(tokenizer, e, cfg.max_seq_len) for e in train_ex) if f]
+    val_feats = [f for f in (build_features(tokenizer, e, cfg.max_seq_len) for e in val_ex) if f]
+    speedups = sorted(e["speedup"] for e in examples if e["speedup"] is not None)
+    lengths = [len(f["input_ids"]) for f in train_feats]
+    stats = {
+        "examples": len(examples),
+        "train": len(train_feats),
+        "val": len(val_feats),
+        "dropped_too_long": len(train_ex) + len(val_ex) - len(train_feats) - len(val_feats),
+        "per_family": {fam: sum(e["family"] == fam for e in examples) for fam in sorted({e["family"] for e in examples})},
+        "tasks": len({e["task_name"] for e in examples}),
+        "unmeasured_examples": sum(e["speedup"] is None for e in examples),
+        "speedup_min_median_max": (
+            [speedups[0], speedups[len(speedups) // 2], speedups[-1]] if speedups else None
+        ),
+        "train_tokens": sum(lengths),
+        "longest_example_tokens": max(lengths) if lengths else 0,
+    }
+    return {"train_ex": train_ex, "val_ex": val_ex, "train_feats": train_feats, "val_feats": val_feats, "stats": stats}
+
+
+def dry_run(cfg: SFTConfig, tokenizer=None) -> dict[str, Any]:
+    """What training would use, without loading the model or touching the GPU."""
+    stats = prepare_data(cfg, tokenizer or load_tokenizer(cfg.tokenizer_name or cfg.model_name))["stats"]
+    steps_per_epoch = math.ceil(stats["train"] / (cfg.micro_batch_size * cfg.grad_accum))
+    stats["optimizer_steps_per_epoch"] = steps_per_epoch
+    stats["optimizer_steps_total"] = steps_per_epoch * cfg.epochs
+    return stats
+
+
 # --- training ----------------------------------------------------------------------------------------------
 
 
@@ -239,17 +278,10 @@ def train(cfg: SFTConfig, model=None, tokenizer=None) -> dict[str, Any]:
     (out / "config.json").write_text(json.dumps(asdict(cfg), indent=1), encoding="utf-8")
 
     tokenizer = tokenizer or load_tokenizer(cfg.tokenizer_name or cfg.model_name)
-    examples = load_sft_examples(cfg.kernels, cfg.annotations, cfg.min_speedup, cfg.include_unannotated)
-    train_ex, val_ex = split_by_task(examples, cfg.val_fraction, cfg.seed)
-    if not train_ex:
-        raise ValueError(
-            f"no training examples left from {len(examples)} candidates; lower --min-speedup "
-            "or annotate more kernels"
-        )
-    train_feats = [f for f in (build_features(tokenizer, e, cfg.max_seq_len) for e in train_ex) if f]
-    val_feats = [f for f in (build_features(tokenizer, e, cfg.max_seq_len) for e in val_ex) if f]
-    dropped = len(train_ex) + len(val_ex) - len(train_feats) - len(val_feats)
-    stats = {"examples": len(examples), "train": len(train_feats), "val": len(val_feats), "dropped_too_long": dropped}
+    data = prepare_data(cfg, tokenizer)
+    train_ex, val_ex, train_feats, val_feats, stats = (
+        data["train_ex"], data["val_ex"], data["train_feats"], data["val_feats"], data["stats"],
+    )
     (out / "data_stats.json").write_text(json.dumps(stats, indent=1), encoding="utf-8")
     log.info("data: %s", stats)
 
@@ -258,7 +290,7 @@ def train(cfg: SFTConfig, model=None, tokenizer=None) -> dict[str, Any]:
             load_base_model(cfg.model_name, quantize=cfg.quantize), cfg.lora_r, cfg.lora_alpha, cfg.lora_dropout
         )
     model.train()
-    device = next(model.parameters()).device
+    device = input_device(model)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=0.0)
 
@@ -363,12 +395,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--val-fraction", type=float, default=defaults.val_fraction)
     parser.add_argument("--n-samples", type=int, default=defaults.n_samples)
     parser.add_argument("--seed", type=int, default=defaults.seed)
+    parser.add_argument("--dry-run", action="store_true", help="show what training would use, without loading the model")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    dry = args.dry_run
+    cfg = SFTConfig(**{k: v for k, v in vars(args).items() if k != "dry_run"})
+    if dry:
+        print(json.dumps(dry_run(cfg), indent=1))
+        return 0
     if args.quantize and not torch.cuda.is_available():
         parser.error("4-bit QLoRA needs a CUDA GPU; none found")
-    train(SFTConfig(**{k: v for k, v in vars(args).items()}))
+    train(cfg)
     return 0
 
 
