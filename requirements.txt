@@ -1,21 +1,21 @@
-# Lower bounds only. Tightened once the install is verified on the target machine
-# (WSL2, Ubuntu 22.04, CUDA 12.x, RTX 4060).
+# Lower bounds only, and only what the code imports. They are tightened once an install on the
+# target machine (WSL2, Ubuntu 22.04, CUDA 12.x, RTX 4060) has been checked: send `pip freeze`.
+#
+# The code and tests were run with torch 2.14.1 / 2.15.0 (CPU builds), triton 3.8.0 / 3.9.0,
+# transformers 5.22.1, peft 0.21.2, bitsandbytes 0.50.2, on Python 3.10 and 3.13. Older
+# releases than these are not tested. Triton also needs a C compiler on the machine
+# (`sudo apt install build-essential`).
 
-# Core
-torch>=2.4
+# Kernels and the benchmark harness
+torch>=2.4  # F.rms_norm, used as the library reference for RMSNorm, was added in 2.4
+triton>=3.0
 numpy
-pandas
 
-# Fine-tuning (QLoRA) and RL (GRPO)
+# Fine-tuning (QLoRA) and reinforcement learning (GRPO)
 transformers>=4.45
 peft>=0.12
 bitsandbytes>=0.43
-accelerate>=0.34
-datasets>=2.20
-trl>=0.14
-
-# Kernel build (torch cpp_extension needs ninja plus nvcc from the CUDA toolkit)
-ninja
+accelerate>=0.34  # device_map loading
 
 # Tests
 pytest
