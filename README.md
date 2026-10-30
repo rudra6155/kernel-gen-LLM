@@ -22,6 +22,18 @@ masking, reductions) but not GPU compilation or speed. So:
 | The QLoRA loop and GRPO loop run end to end on a tiny model | That the 3B model trains in 8 GB, and that SFT or RL improve it |
 | The sign and clipping of the GRPO update, on a tiny model | Nsight under WSL2 (often unavailable) |
 
+### Reading a REFUTED claim
+
+A REFUTED claim in `CLAIMS.md` is a result, not an error: the evidence exists and it says the
+claim does not hold, so the claim stays in the ledger with the measured number next to it.
+
+The gemm family is the clearest case. Its baseline is `torch.matmul`, which is cuBLAS itself,
+so there is no naive version to beat: a template kernel has to match a library that is
+typically heavily tuned. A REFUTED gemm claim means the templates did not, and it is reported
+as measured. This repository has not yet profiled *why* they fall short, and no cause is
+asserted; `make profile` shows kernel time, launches and bandwidth for one gemm task, and
+`make profile PROFILE_ARGS="--scope all"` for all of them.
+
 `make status` prints the Definition of Done checklist computed from the repository, with
 the pending items and the command that produces each. `make claims` regenerates
 `CLAIMS.md`; a claim is VERIFIED only when its CSV evidence exists and holds.
@@ -62,6 +74,46 @@ The annotation measures one kernel at a time (kernels timed together disturb eac
 so it takes a long time; how long was not measured. It can be interrupted and resumed.
 `make sft` needs `data/annotations.jsonl`. To train on the unmeasured template kernels
 instead, pass `SFT_ARGS="--include-unannotated"`.
+
+## Running fine-tuning and reinforcement learning
+
+Check what fine-tuning would train on before spending GPU time. This loads only the tokenizer:
+
+```bash
+make sft SFT_ARGS="--dry-run"
+```
+
+It prints how many annotated kernels qualify (correct, and faster than the baseline by default),
+per family, the token counts, and the optimizer steps. If a family has almost no qualifying
+kernels, the model will see almost nothing of it.
+
+```bash
+make sft                    # QLoRA fine-tuning; writes runs/sft/
+make eval-model TAG=base    # the untuned model on the 50 held-out tasks, for comparison
+make eval-model TAG=sft ADAPTER=runs/sft/final
+make rl                     # GRPO from the SFT adapter; writes runs/rl/
+make eval-model TAG=rl ADAPTER=runs/rl/final
+make collect-logs && make claims
+```
+
+Do a short smoke run of RL first to see how long a step takes (this was not measured) and that
+nothing crashes: `make rl RL_ARGS="--steps 2 --group-size 4 --out runs/rl_smoke"`.
+
+What to watch while they run:
+
+| File | Shows |
+| --- | --- |
+| `runs/sft/train_log.csv` | training loss every few optimizer steps |
+| `runs/sft/epoch_summary.json` | per-epoch training and validation loss, and how many of the epoch's sample replies contained code, parsed as Python, and passed the policy |
+| `runs/sft/samples/epoch_N.jsonl` | the sampled replies themselves, to read |
+| `runs/rl/reward_curve.csv` | per step: `mean_reward`, `frac_correct`, `frac_faster` (than the baseline), `dead_groups` (groups with no reward variance, which teach nothing), `kl` |
+| `runs/rl/samples/step_N.jsonl` | every generated kernel with its reward, status, and error |
+
+`watch -n 30 'tail -n 5 runs/rl/reward_curve.csv'` follows the RL run. If it diverges it stops and
+writes `runs/rl/divergence_report.json` with the reward curve and the latest generated code.
+Learning is shown by `frac_correct`, `frac_faster` and `mean_reward` rising over steps, and by the
+held-out evaluation: pass@k and best-of-k speedup of the `base`, `sft` and `rl` models. A rising
+training loss curve alone shows only that the model fits its data.
 
 ## How it works
 

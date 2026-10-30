@@ -56,8 +56,9 @@ nsight:
 
 # Kernel time and effective memory bandwidth via torch.profiler. Pass the
 # card's spec bandwidth if known: make profile PEAK_GBPS=<GB/s>
+# All 50 held-out tasks instead of one per family: make profile PROFILE_ARGS="--scope all"
 profile:
-	$(PYTHON) -m kernelgen.profiling --out $(RESULTS)/profile_summary.csv --trace-dir $(RESULTS)/traces $(if $(PEAK_GBPS),--peak-gbps $(PEAK_GBPS))
+	$(PYTHON) -m kernelgen.profiling --out $(RESULTS)/profile_summary.csv --trace-dir $(RESULTS)/traces $(if $(PEAK_GBPS),--peak-gbps $(PEAK_GBPS)) $(PROFILE_ARGS)
 
 # Copy the small training logs from runs/ to results/training/ so they can be committed (adapters stay local).
 collect-logs:
