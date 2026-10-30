@@ -50,6 +50,38 @@ def test_failing_candidate_is_reported_as_error(source, message):
     assert "\n" not in row["error"]
 
 
+def test_candidate_is_also_timed_against_the_library_op():
+    row = run(sources.LIBRARY)
+    assert row["library_desc"] == "torch.nn.functional.layer_norm"
+    assert row["library_ms"] > 0
+    assert row["speedup_vs_library"] == pytest.approx(row["library_ms"] / row["candidate_ms"], rel=0.5)
+    assert row["speedup_vs_library"] > 0
+    assert row["error"] == ""
+
+
+def test_task_without_a_library_op_leaves_the_library_columns_empty():
+    from kernelgen.families import get_family
+
+    task = get_family("gemm").task({"M": 8, "N": 8, "K": 8})
+    assert task.library is None
+    src = "import torch\ndef solution(a, b):\n    return torch.matmul(a, b)\n"
+    row = evaluate(task, src, "c", "cpu", warmup=1, reps=3, seeds=(0,), env=ENV)
+    assert row["status"] == "ok", row["error"]
+    assert row["library_ms"] is None and row["speedup_vs_library"] is None and row["library_desc"] == ""
+
+
+def test_library_failure_does_not_fail_the_candidate():
+    from dataclasses import replace
+
+    def broken(*args):
+        raise RuntimeError("no kernel for this device")
+
+    row = evaluate(replace(TASK, library=broken), sources.LIBRARY, "c", "cpu", warmup=1, reps=3, seeds=(0,), env=ENV)
+    assert row["status"] == "ok" and row["correct"] == 1 and row["speedup"] > 0
+    assert row["library_ms"] is None and row["speedup_vs_library"] is None
+    assert "library timing failed" in row["error"] and "no kernel for this device" in row["error"]
+
+
 def test_native_ops_are_rejected_when_forbidden():
     row = evaluate(
         TASK, sources.LIBRARY, "c", "cpu", warmup=1, reps=5, seeds=(0, 1), env=ENV, forbid_native_ops=True

@@ -43,6 +43,20 @@ def test_wrong_candidates_are_rejected(source, reason):
     assert reason in result.reason
 
 
+def test_truth_not_the_baseline_decides_correctness():
+    from dataclasses import replace
+
+    # A baseline that is wrong by +1 everywhere. The truth is the real LayerNorm.
+    biased_baseline = replace(TASK, reference=lambda x, w, b: TASK.reference(x, w, b) + 1.0, truth=TASK.reference)
+    with load_candidate(sources.NAIVE) as fn:
+        assert check_correctness(biased_baseline, fn, "cpu", seeds=(0,)).correct
+
+    # Without a truth the same biased baseline would reject the correct kernel.
+    no_truth = replace(biased_baseline, truth=None)
+    with load_candidate(sources.NAIVE) as fn:
+        assert not check_correctness(no_truth, fn, "cpu", seeds=(0,)).correct
+
+
 def test_exceptions_from_the_candidate_propagate():
     with pytest.raises(RuntimeError, match="boom"):
         run_gate(sources.RAISES)

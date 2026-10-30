@@ -37,6 +37,22 @@ KNOWN_KERNELS = {
 }
 
 
+def _time_against_library(task, fn, inputs, device, warmup, reps, row) -> None:
+    """Time the candidate against PyTorch's own optimized op (a second interleaved run).
+
+    A failure here does not fail the candidate; it leaves the library columns
+    empty and says why in the error column.
+    """
+    try:
+        timing = benchmark_pair(
+            lambda: task.library(*inputs), lambda: fn(*inputs), device, warmup=warmup, reps=reps
+        )
+        row["library_ms"] = timing.baseline_median
+        row["speedup_vs_library"] = timing.speedup
+    except Exception as exc:
+        row["error"] = one_line(f"library timing failed: {type(exc).__name__}: {exc}")
+
+
 def evaluate(
     task: Task,
     source: str,
@@ -85,6 +101,8 @@ def evaluate(
                     candidate_ms_p90=percentile(timing.candidate_ms, 0.9),
                     speedup=timing.speedup,
                 )
+                if task.library is not None:
+                    _time_against_library(task, fn, inputs, device, warmup, reps, row)
     except PolicyViolation as exc:
         return fail_row(row, "rejected", str(exc))
     except Exception as exc:

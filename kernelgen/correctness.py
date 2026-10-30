@@ -47,7 +47,7 @@ def check_correctness(
     for seed in seeds:
         inputs = task.make_inputs(seed, device)
         snapshot = _clone(inputs)
-        expected = task.reference(*inputs)
+        expected = (task.truth or task.reference)(*inputs)
 
         guard = NativeOpGuard()
         if forbid_native_ops:

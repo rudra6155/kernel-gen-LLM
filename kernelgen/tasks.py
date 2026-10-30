@@ -28,12 +28,27 @@ class Task:
     baseline_desc: str
     rtol: float
     atol: float
+    # PyTorch's own optimized op for the same computation, if there is one
+    # (F.layer_norm, torch.softmax, ...). Candidates are also timed against it,
+    # so a speedup over the naive baseline cannot be mistaken for a speedup over
+    # the library. Same call signature as `reference`.
+    library: Callable[..., torch.Tensor] | None = None
+    library_desc: str = ""
+    # If set, the correctness gate compares candidates to this instead of to
+    # `reference`: a float32 computation rounded to the output dtype. A
+    # low-precision baseline carries its own rounding error, which should not
+    # decide what counts as correct. Same call signature as `reference`.
+    truth: Callable[..., torch.Tensor] | None = None
 
 
 def _naive_layernorm(x, weight, bias, eps: float = 1e-5):
     mean = x.mean(dim=-1, keepdim=True)
     var = ((x - mean) ** 2).mean(dim=-1, keepdim=True)
     return (x - mean) / torch.sqrt(var + eps) * weight + bias
+
+
+def _library_layernorm(x, weight, bias, eps: float = 1e-5):
+    return torch.nn.functional.layer_norm(x, (x.shape[-1],), weight, bias, eps)
 
 
 def layernorm_task(m: int, n: int, dtype: torch.dtype = torch.float32) -> Task:
@@ -58,6 +73,8 @@ def layernorm_task(m: int, n: int, dtype: torch.dtype = torch.float32) -> Task:
         baseline_desc="eager PyTorch LayerNorm from mean/sub/pow/sqrt/div/mul/add ops",
         rtol=1e-4,
         atol=1e-4,
+        library=_library_layernorm,
+        library_desc="torch.nn.functional.layer_norm",
     )
 
 
@@ -76,8 +93,6 @@ def task_spec(task: Task) -> dict[str, Any]:
 
 def task_from_spec(spec: dict[str, Any]) -> Task:
     """Rebuild a task in another process. Tasks hold closures, so they are not picklable."""
-    dtype = getattr(torch, spec["dtype"])
-    params = spec["params"]
-    if spec["family"] == "layernorm":
-        return layernorm_task(params["M"], params["N"], dtype)
-    raise ValueError(f"unknown task family: {spec['family']!r}")
+    from kernelgen.families import get_family  # imported here: the families import this module
+
+    return get_family(spec["family"]).build_task(spec["params"], getattr(torch, spec["dtype"]))
