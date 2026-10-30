@@ -15,7 +15,7 @@ speedup over a PyTorch baseline, gated on correctness.
 | Hardware | NVIDIA RTX 4060, 8 GB VRAM (Ada, compute capability 8.9), 24 GB system RAM |
 | CUDA | 12.x |
 | Host | WSL2, Ubuntu 22.04 |
-| Model | Qwen2.5-Coder-3B, 4-bit QLoRA |
+| Model | Qwen2.5-Coder-3B-Instruct, 4-bit QLoRA |
 | Reward | Speedup vs. PyTorch baseline, with a correctness gate |
 | Benchmark | 50 held-out kernel tasks (GEMM, attention, layernorm, ...) |
 
@@ -41,6 +41,9 @@ correct = 1 if the candidate compiles, runs, and matches the PyTorch
 1. **Dataset.** 500-2000 kernels, each annotated with correctness and measured
    speedup, plus a script that re-measures and verifies the annotations.
    Annotations come from measurements on the target GPU, never entered by hand.
+   The kernels are generated programmatically from parameterized templates
+   (for example GEMM with varying matrix sizes and tilings, LayerNorm with
+   varying block sizes), not written by hand one by one.
 2. **Fine-tuning.** A LoRA/QLoRA script. Logs training loss and a few generated
    samples per epoch.
 3. **RL loop.** GRPO (or a simplified PPO) using the reward above.
@@ -79,8 +82,6 @@ evidence of anything.
 
 ## Not yet decided
 
-- Checkpoint variant: base or `-Instruct`.
-- How the 500-2000 kernels are sourced.
 - Task families beyond GEMM, attention, and layernorm.
 - Whether GRPO fits in 8 GB VRAM at the intended group size (not measured).
 - Whether `ncu` / `nsys` work under this WSL2 setup (not checked).
