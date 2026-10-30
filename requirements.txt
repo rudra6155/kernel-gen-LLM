@@ -1,0 +1,21 @@
+# Lower bounds only. Tightened once the install is verified on the target machine
+# (WSL2, Ubuntu 22.04, CUDA 12.x, RTX 4060).
+
+# Core
+torch>=2.4
+numpy
+pandas
+
+# Fine-tuning (QLoRA) and RL (GRPO)
+transformers>=4.45
+peft>=0.12
+bitsandbytes>=0.43
+accelerate>=0.34
+datasets>=2.20
+trl>=0.14
+
+# Kernel build (torch cpp_extension needs ninja plus nvcc from the CUDA toolkit)
+ninja
+
+# Tests
+pytest

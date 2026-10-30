@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Compiled kernel artifacts
+*.o
+*.so
+
+# Training outputs and caches (large, regenerated)
+checkpoints/
+runs/
+wandb/
+outputs/
+.cache/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+
+# Secrets
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# LLM tooling config
+.claude/
+.antigravity/
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+.codex/
+.gemini/
+.continue/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.github/copilot-instructions.md
