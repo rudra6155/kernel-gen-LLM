@@ -8,8 +8,10 @@ Two layers, aimed at reward hacking and accidents rather than a hostile author:
    tensors, or a library call reached through an alias.
 
 Neither layer is a security sandbox. Process isolation lives in kernelgen.sandbox.
-Memoizing results between calls and changing behaviour once timing starts are
-not detected.
+Caching results between calls is handled by the timing run, not here: it uses new
+data on every call and checks each output (kernelgen.timing.benchmark_fresh). A
+candidate that behaves differently once timing starts is only caught if that
+makes its output wrong.
 """
 
 from __future__ import annotations

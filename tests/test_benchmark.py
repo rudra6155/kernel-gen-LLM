@@ -53,9 +53,10 @@ def test_failing_candidate_is_reported_as_error(source, message):
 def test_candidate_is_also_timed_against_the_library_op():
     row = run(sources.LIBRARY)
     assert row["library_desc"] == "torch.nn.functional.layer_norm"
+    # The library is timed in a second interleaved run, so these are not derived from
+    # the baseline run's candidate_ms; only their presence and sign are guaranteed.
     assert row["library_ms"] > 0
-    assert row["speedup_vs_library"] == pytest.approx(row["library_ms"] / row["candidate_ms"], rel=0.5)
-    assert row["speedup_vs_library"] > 0
+    assert 0 < row["speedup_vs_library"] < float("inf")
     assert row["error"] == ""
 
 
@@ -114,3 +115,49 @@ def test_csv_round_trip(tmp_path):
     assert bad["speedup"] == "" and bad["candidate_ms"] == ""
     assert float(bad["reward"]) == 0.0
     assert good["params"] == '{"M": 8, "N": 64}'
+
+
+# --- the timing run cannot be gamed by remembering results ------------------------------------------------
+
+MEMO_BY_POINTER = """
+import torch
+
+_cache = {}
+
+def solution(x, weight, bias, eps=1e-5):
+    key = x.data_ptr()
+    if key not in _cache:
+        mean = x.mean(dim=-1, keepdim=True)
+        var = ((x - mean) ** 2).mean(dim=-1, keepdim=True)
+        _cache[key] = (x - mean) / torch.sqrt(var + eps) * weight + bias
+    return _cache[key]
+"""
+
+WRONG_AFTER_THE_GATE = """
+import torch
+
+_calls = 0
+
+def solution(x, weight, bias, eps=1e-5):
+    global _calls
+    _calls += 1
+    mean = x.mean(dim=-1, keepdim=True)
+    var = ((x - mean) ** 2).mean(dim=-1, keepdim=True)
+    out = (x - mean) / torch.sqrt(var + eps) * weight + bias
+    return out if _calls <= 2 else out * 0.5
+"""
+
+
+def test_a_candidate_that_turns_wrong_once_timing_starts_is_marked_incorrect():
+    row = evaluate(TASK, WRONG_AFTER_THE_GATE, "c", "cpu", warmup=1, reps=3, seeds=(0, 1), env=ENV)
+    assert row["status"] == "incorrect" and row["correct"] == 0 and row["reward"] == 0.0
+    assert row["speedup"] is None and "timing run" in row["error"] and "tolerance" in row["error"]
+
+
+def test_caching_results_by_input_pointer_cannot_buy_a_speedup():
+    task = layernorm_task(64, 512)
+    row = evaluate(task, MEMO_BY_POINTER, "c", "cpu", warmup=2, reps=20, seeds=(0, 1), env=ENV)
+    # Either a stale cached result is caught as wrong, or the cache never hits and the
+    # kernel does the real work. Timing the same tensors every call would instead make
+    # a cache hit look about a hundred times faster than the baseline.
+    assert row["status"] == "incorrect" or row["speedup"] < 5.0, row

@@ -58,9 +58,17 @@ three layers, so that speedup can only come from the generated kernel:
 Rows that fail these checks have status `rejected`, `timeout`, or `crash` and
 reward 0. They are written to the CSV like any other row.
 
-Known limits: this is a policy filter, not a security sandbox. It does not
-detect memoizing results between calls or behaving differently while being
-timed. The allowlists were written without seeing real model output, and will be
+4. **Fresh-data timing** (`kernelgen/timing.py`, `benchmark_fresh`). Every timed
+   call, for the baseline and the candidate alike, gets new input data, and the
+   candidate's output on that data is checked against the truth outside the
+   timer. A candidate that caches its result (for example keyed on the input
+   pointer) gains nothing: the cache either misses, so the real work is done, or
+   returns a stale result that is rejected. Without this, such a cache measured a
+   53x speedup in a test.
+
+Known limits: this is a policy filter, not a security sandbox. A candidate that
+behaves differently while being timed is only caught if that makes its output
+wrong. The allowlists were written without seeing real model output, and will be
 widened only when a legitimate kernel is wrongly rejected. The 120 s default
 timeout is a starting value, not a measured one.
 

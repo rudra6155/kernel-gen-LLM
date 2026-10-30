@@ -20,13 +20,13 @@ from typing import Any, Sequence
 import torch
 
 from kernelgen.candidate import load_candidate
-from kernelgen.correctness import check_correctness
+from kernelgen.correctness import check_correctness, expected_output, output_problem
 from kernelgen.policy import PolicyViolation
 from kernelgen.reward import compute_reward
 from kernelgen.rows import FIELDS, environment_info, fail_row, new_row, one_line, write_csv
 from kernelgen.sandbox import DEFAULT_TIMEOUT_S, evaluate_isolated
 from kernelgen.tasks import TIMING_SEED, Task, default_tasks
-from kernelgen.timing import benchmark_pair, percentile
+from kernelgen.timing import TimingVerificationError, benchmark_fresh, percentile
 
 __all__ = ["FIELDS", "KNOWN_KERNELS", "evaluate", "main", "run_known_kernels", "write_csv"]
 
@@ -37,16 +37,14 @@ KNOWN_KERNELS = {
 }
 
 
-def _time_against_library(task, fn, inputs, device, warmup, reps, row) -> None:
+def _time_against_library(task, fn, make_args, device, warmup, reps, row) -> None:
     """Time the candidate against PyTorch's own optimized op (a second interleaved run).
 
     A failure here does not fail the candidate; it leaves the library columns
     empty and says why in the error column.
     """
     try:
-        timing = benchmark_pair(
-            lambda: task.library(*inputs), lambda: fn(*inputs), device, warmup=warmup, reps=reps
-        )
+        timing = benchmark_fresh(make_args, task.library, fn, device, warmup=warmup, reps=reps)
         row["library_ms"] = timing.baseline_median
         row["speedup_vs_library"] = timing.speedup
     except Exception as exc:
@@ -83,13 +81,14 @@ def evaluate(
                 row["status"] = "incorrect"
                 row["error"] = one_line(gate.reason)
             else:
-                inputs = task.make_inputs(TIMING_SEED, device)
-                timing = benchmark_pair(
-                    lambda: task.reference(*inputs),
-                    lambda: fn(*inputs),
-                    device,
-                    warmup=warmup,
-                    reps=reps,
+                def make_args(i: int) -> tuple:
+                    return task.make_inputs(TIMING_SEED + i, device)
+
+                def verify(out: object, args: tuple) -> str | None:
+                    return output_problem(task, out, expected_output(task, args))[0]
+
+                timing = benchmark_fresh(
+                    make_args, task.reference, fn, device, warmup=warmup, reps=reps, verify=verify
                 )
                 row.update(
                     status="ok",
@@ -102,9 +101,13 @@ def evaluate(
                     speedup=timing.speedup,
                 )
                 if task.library is not None:
-                    _time_against_library(task, fn, inputs, device, warmup, reps, row)
+                    _time_against_library(task, fn, make_args, device, warmup, reps, row)
     except PolicyViolation as exc:
         return fail_row(row, "rejected", str(exc))
+    except TimingVerificationError as exc:
+        # It passed the gate on its seeds but is wrong on the data used for timing.
+        row["max_abs_err"] = None
+        return fail_row(row, "incorrect", str(exc))
     except Exception as exc:
         # correct is left as the gate set it: a candidate that passed the gate
         # and then failed while being timed still passed the gate.

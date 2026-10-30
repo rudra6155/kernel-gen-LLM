@@ -29,6 +29,29 @@ def _unchanged(before: list, after: tuple) -> bool:
     return True
 
 
+def expected_output(task: Task, inputs: tuple) -> torch.Tensor:
+    """What a correct candidate must return for `inputs`: the truth if the task has one, else the baseline."""
+    return (task.truth or task.reference)(*inputs)
+
+
+def output_problem(task: Task, out: object, expected: torch.Tensor) -> tuple[str | None, float | None]:
+    """Why `out` is not an acceptable result, or None. Also returns the max abs error when it was computed."""
+    if not isinstance(out, torch.Tensor):
+        return f"output is {type(out).__name__}, not a Tensor", None
+    if out.shape != expected.shape:
+        return f"shape {tuple(out.shape)} != {tuple(expected.shape)}", None
+    if out.dtype != expected.dtype:
+        return f"dtype {out.dtype} != {expected.dtype}", None
+    if out.device != expected.device:
+        return f"device {out.device} != {expected.device}", None
+    if not bool(torch.isfinite(out).all()):
+        return "output has NaN or Inf", None
+    err = float((out.float() - expected.float()).abs().max())
+    if not torch.allclose(out, expected, rtol=task.rtol, atol=task.atol):
+        return f"max abs err {err:.3e} exceeds tolerance", err
+    return None, err
+
+
 def check_correctness(
     task: Task,
     fn: Callable,
@@ -47,7 +70,7 @@ def check_correctness(
     for seed in seeds:
         inputs = task.make_inputs(seed, device)
         snapshot = _clone(inputs)
-        expected = (task.truth or task.reference)(*inputs)
+        expected = expected_output(task, inputs)
 
         guard = NativeOpGuard()
         if forbid_native_ops:
@@ -60,22 +83,11 @@ def check_correctness(
         if device.startswith("cuda"):
             torch.cuda.synchronize()
 
-        if not isinstance(out, torch.Tensor):
-            return CorrectnessResult(False, None, f"seed {seed}: output is {type(out).__name__}, not a Tensor")
-        if out.shape != expected.shape:
-            return CorrectnessResult(False, None, f"seed {seed}: shape {tuple(out.shape)} != {tuple(expected.shape)}")
-        if out.dtype != expected.dtype:
-            return CorrectnessResult(False, None, f"seed {seed}: dtype {out.dtype} != {expected.dtype}")
-        if out.device != expected.device:
-            return CorrectnessResult(False, None, f"seed {seed}: device {out.device} != {expected.device}")
+        problem, err = output_problem(task, out, expected)
+        if problem is not None:
+            return CorrectnessResult(False, err, f"seed {seed}: {problem}")
         if not _unchanged(snapshot, inputs):
             return CorrectnessResult(False, None, f"seed {seed}: candidate modified its inputs")
-        if not bool(torch.isfinite(out).all()):
-            return CorrectnessResult(False, None, f"seed {seed}: output has NaN or Inf")
-
-        err = float((out.float() - expected.float()).abs().max())
         worst = max(worst, err)
-        if not torch.allclose(out, expected, rtol=task.rtol, atol=task.atol):
-            return CorrectnessResult(False, err, f"seed {seed}: max abs err {err:.3e} exceeds tolerance")
 
     return CorrectnessResult(True, worst)
