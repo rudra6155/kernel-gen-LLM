@@ -6,6 +6,7 @@ import pytest
 
 from kernelgen import sandbox
 from kernelgen.benchmark import KNOWN_KERNELS
+from kernelgen.families import get_family
 from kernelgen.tasks import layernorm_task
 
 import sources
@@ -171,3 +172,47 @@ def test_known_kernel_passes_the_whole_pipeline_on_cpu(monkeypatch):
     assert row["status"] == "ok", row["error"]
     assert row["correct"] == 1
     assert row["max_abs_err"] < 1e-4
+
+
+# --- device "cpu" always means Triton's interpreter in the worker ------------------------------------------------
+
+
+def test_a_cpu_triton_candidate_works_even_if_the_parent_has_no_interpreter_switch(monkeypatch):
+    # A machine with a GPU does not switch the interpreter on globally. Without the worker
+    # setting it for device "cpu", Triton fails on CPU tensors ("Pointer argument cannot be
+    # accessed from Triton (cpu tensor?)", or "0 active drivers" with no driver at all).
+    monkeypatch.delenv("TRITON_INTERPRET", raising=False)
+    fam = get_family("softmax")
+    params = {"M": 4, "N": 100}
+    row = sandbox.evaluate_isolated(
+        fam.task(params), fam.render(params, fam.default_config(params)), "c", "cpu",
+        warmup=1, reps=3, seeds=(0, 1), env=ENV, timeout_s=120.0,
+    )
+    assert row["status"] == "ok", row["error"]
+
+
+def captured_worker_env(monkeypatch, device):
+    seen = {}
+
+    def spy(cmd, **kwargs):
+        seen.update(kwargs["env"])
+        raise RuntimeError("stop before starting a process")
+
+    monkeypatch.setattr(sandbox.subprocess, "Popen", spy)
+    with pytest.raises(RuntimeError, match="stop before"):
+        sandbox.run_worker({"device": device}, 1.0, "x")
+    return seen
+
+
+def test_the_worker_for_cpu_gets_the_interpreter_whatever_the_parent_environment_says(monkeypatch):
+    monkeypatch.delenv("TRITON_INTERPRET", raising=False)
+    assert captured_worker_env(monkeypatch, "cpu")["TRITON_INTERPRET"] == "1"
+    monkeypatch.setenv("TRITON_INTERPRET", "0")
+    assert captured_worker_env(monkeypatch, "cpu")["TRITON_INTERPRET"] == "1"
+
+
+def test_the_worker_for_cuda_inherits_the_parent_environment_unchanged(monkeypatch):
+    monkeypatch.delenv("TRITON_INTERPRET", raising=False)
+    assert "TRITON_INTERPRET" not in captured_worker_env(monkeypatch, "cuda")
+    monkeypatch.setenv("SOME_SETTING", "kept")
+    assert captured_worker_env(monkeypatch, "cuda")["SOME_SETTING"] == "kept"

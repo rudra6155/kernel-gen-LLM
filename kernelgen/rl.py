@@ -44,7 +44,7 @@ from typing import Any, Callable, Sequence
 import torch
 
 from kernelgen.dataset import read_jsonl, sha256
-from kernelgen.modeling import DEFAULT_MODEL, add_lora, load_adapter, load_base_model, load_tokenizer, sample
+from kernelgen.modeling import DEFAULT_MODEL, add_lora, input_device, load_adapter, load_base_model, load_tokenizer, sample
 from kernelgen.prompts import build_prompt, extract_code
 from kernelgen.rows import environment_info
 from kernelgen.sandbox import evaluate_isolated
@@ -176,8 +176,7 @@ def grpo_sample_loss(
 
 def token_logprobs(model, prompt_ids: Sequence[int], completion_ids: Sequence[int]) -> torch.Tensor:
     """Log-probability the model gives each completion token, shape [len(completion_ids)]."""
-    device = next(model.parameters()).device
-    ids = torch.tensor([list(prompt_ids) + list(completion_ids)], device=device)
+    ids = torch.tensor([list(prompt_ids) + list(completion_ids)], device=input_device(model))
     logits = model(input_ids=ids).logits[0, len(prompt_ids) - 1 : -1].float()
     return torch.log_softmax(logits, dim=-1).gather(-1, ids[0, len(prompt_ids) :].unsqueeze(-1)).squeeze(-1)
 
@@ -342,22 +341,33 @@ def train_rl(cfg: RLConfig, model=None, tokenizer=None, reward_fn: RewardFn | No
             order = rng.sample(range(len(tasks)), len(tasks))
         batch = [tasks[order.pop()] for _ in range(cfg.prompts_per_step)]
 
-        # 1. generate a group of kernels per task
+        # 0. Sampling from NaN probabilities is a device-side assert on CUDA, which destroys the
+        # context and with it the chance to report what happened. So look at the weights first.
+        if not all(bool(torch.isfinite(p).all()) for p in params):
+            status, reason = "diverged", "the policy's trainable weights are non-finite (NaN or Inf)"
+            _report_divergence(out, cfg, model, step, reason, curve, recent_samples)
+            break
+
+        # 1. generate a group of kernels per task. Invalid logits are replaced rather than sampled
+        # from; a numerical blow-up then shows up as a non-finite loss below and is reported.
         prompts = [build_prompt(t) for t in batch]
         try:
             samples = sample(
-                model, tokenizer, prompts, cfg.max_new_tokens, cfg.temperature, cfg.top_p, num_return_sequences=cfg.group_size
+                model, tokenizer, prompts, cfg.max_new_tokens, cfg.temperature, cfg.top_p,
+                num_return_sequences=cfg.group_size, remove_invalid_values=True,
             )
         except RuntimeError as exc:
             if "probability tensor" not in str(exc):
                 raise
-            # The policy's weights, or the logits they produce, are no longer finite.
             status, reason = "diverged", "sampling failed: the policy produces non-finite probabilities"
             _report_divergence(out, cfg, model, step, reason, curve, recent_samples)
             break
 
         # 2. score every kernel
         results = [[reward_fn(task, s.text) for s in group] for task, group in zip(batch, samples)]
+        for r in (r for group in results for r in group):
+            if not math.isfinite(r.reward):
+                raise ValueError(f"the reward function returned a non-finite reward ({r.reward}); it must return a finite number")
         advantages = [group_advantages([r.reward for r in group]) for group in results]
         items = [
             (s.prompt_ids, s.completion_ids, adv)

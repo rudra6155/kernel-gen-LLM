@@ -73,6 +73,11 @@ def load_adapter(model, adapter_dir: str | Path, trainable: bool = False):
     return PeftModel.from_pretrained(model, str(adapter_dir), is_trainable=trainable)
 
 
+def input_device(model) -> torch.device:
+    """Where a model's input ids must live: the device of its embedding layer."""
+    return model.get_input_embeddings().weight.device
+
+
 @dataclass
 class Sample:
     prompt_ids: list[int]
@@ -101,8 +106,15 @@ def sample(
     top_p: float = 0.95,
     num_return_sequences: int = 1,
     greedy: bool = False,
+    remove_invalid_values: bool = False,
 ) -> list[list[Sample]]:
-    """Chat-format `prompts`, generate, and return `num_return_sequences` samples per prompt."""
+    """Chat-format `prompts`, generate, and return `num_return_sequences` samples per prompt.
+
+    With `remove_invalid_values`, NaN and Inf in the logits are replaced before sampling. Without
+    it, sampling from NaN probabilities raises on CPU but is a device-side assert on CUDA, which
+    leaves the CUDA context unusable. A training loop wants the former behaviour for its own
+    sake: it detects the blow-up from the loss and reports it, which needs a live context.
+    """
     texts = [
         tokenizer.apply_chat_template(to_messages(p), tokenize=False, add_generation_prompt=True) for p in prompts
     ]
@@ -112,7 +124,7 @@ def sample(
         batch = tokenizer(texts, return_tensors="pt", padding=True, add_special_tokens=False)
     finally:
         tokenizer.padding_side = old_side
-    batch = {k: v.to(model.device) for k, v in batch.items()}
+    batch = {k: v.to(input_device(model)) for k, v in batch.items()}
 
     was_training = model.training
     model.eval()
@@ -120,6 +132,8 @@ def sample(
         gen_kwargs: dict[str, Any] = dict(
             max_new_tokens=max_new_tokens, pad_token_id=tokenizer.pad_token_id, use_cache=True,
         )
+        if remove_invalid_values:
+            gen_kwargs["remove_invalid_values"] = True
         if greedy:
             gen_kwargs.update(do_sample=False, num_return_sequences=1)
         else:

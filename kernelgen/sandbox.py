@@ -100,7 +100,16 @@ def _read_result(path: Path) -> dict[str, Any] | None:
 
 
 def run_worker(request: dict[str, Any], timeout_s: float, label: str) -> WorkerOutcome:
-    """Run `python -m kernelgen.worker` on `request` under a wall-clock limit."""
+    """Run `python -m kernelgen.worker` on `request` under a wall-clock limit.
+
+    A request for device "cpu" runs the worker with Triton's CPU interpreter, whatever the
+    parent's environment says: Triton kernels cannot run on CPU tensors any other way, and
+    on a machine that has a GPU the interpreter is (rightly) not switched on globally. CPU
+    runs check a kernel's logic, not its GPU compilation or speed.
+    """
+    env = dict(os.environ)
+    if request.get("device") == "cpu":
+        env["TRITON_INTERPRET"] = "1"
     with tempfile.TemporaryDirectory(prefix="kernelgen_run_") as tmp:
         tmp = Path(tmp)
         request_path, result_path = tmp / "request.json", tmp / "result.json"
@@ -116,6 +125,7 @@ def run_worker(request: dict[str, Any], timeout_s: float, label: str) -> WorkerO
                 stdout=out,
                 stderr=err,
                 cwd=PROJECT_ROOT,
+                env=env,
                 start_new_session=True,
             )
             try:

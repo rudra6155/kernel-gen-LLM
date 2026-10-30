@@ -398,13 +398,67 @@ def test_a_diverging_run_stops_and_reports_the_reward_curve_and_the_code(tok, mo
     assert not (out / "final").exists()
 
 
-def test_a_non_finite_loss_is_reported_as_divergence_not_applied(tok, model, tmp_path):
+def test_non_finite_weights_are_reported_before_anything_is_sampled(tok, model, tmp_path, monkeypatch):
+    # Sampling from NaN probabilities is a device-side assert on CUDA, which kills the CUDA
+    # context for the rest of the process (and so for the report). It must never be reached.
+    def must_not_sample(*a, **k):
+        raise AssertionError("sample() was called with non-finite weights")
+
+    monkeypatch.setattr(rl, "sample", must_not_sample)
     for p in model.parameters():
         if p.requires_grad:
             p.data.fill_(float("nan"))
     summary = train_rl(rl_cfg(tmp_path, steps=3), model=model, tokenizer=tok, reward_fn=fake_reward)
-    assert summary["status"] == "diverged" and "non-finite" in summary["reason"]
-    assert (tmp_path / "rl" / "divergence_report.json").exists()
+    assert summary["status"] == "diverged" and "non-finite" in summary["reason"] and summary["steps_run"] == 0
+    report = json.loads((tmp_path / "rl" / "divergence_report.json").read_text())
+    assert report["reason"] == summary["reason"] and report["reward_curve"] == []
+
+
+def test_the_loop_samples_with_invalid_logits_removed(tok, model, tmp_path, monkeypatch):
+    seen = {}
+    real = rl.sample
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(rl, "sample", spy)
+    train_rl(rl_cfg(tmp_path, steps=1), model=model, tokenizer=tok, reward_fn=fake_reward)
+    assert seen.get("remove_invalid_values") is True
+
+
+def test_a_numerical_blow_up_during_training_is_reported_not_applied(tok, model, tmp_path, monkeypatch):
+    # The weights are finite but the log-probabilities are not, as when activations overflow:
+    # the update must be skipped, and the run reported as diverged.
+    real = rl.token_logprobs
+    monkeypatch.setattr(rl, "token_logprobs", lambda *a, **k: real(*a, **k) * float("nan"))
+    before = lora_state(model)
+    summary = train_rl(rl_cfg(tmp_path, steps=3), model=model, tokenizer=tok, reward_fn=fake_reward)
+    after = lora_state(model)
+    assert summary["status"] == "diverged" and "non-finite" in summary["reason"] and summary["steps_run"] == 1
+    assert all(torch.equal(before[n], after[n]) for n in before), "a non-finite update was applied"
+
+
+def test_a_reward_function_returning_nan_or_inf_fails_with_a_clear_message(tok, model, tmp_path):
+    bad = lambda spec, text: RewardResult(float("nan"), "ok", True, 1.0, "", None)  # noqa: E731
+    with pytest.raises(ValueError, match="non-finite reward"):
+        train_rl(rl_cfg(tmp_path, steps=1), model=model, tokenizer=tok, reward_fn=bad)
+
+
+def test_invalid_logits_do_not_crash_sampling_when_asked_to_remove_them(tok, model):
+    from kernelgen.modeling import sample
+
+    for p in model.parameters():
+        if p.requires_grad:
+            p.data.fill_(float("nan"))
+    (group,) = sample(model, tok, ["x"], max_new_tokens=3, num_return_sequences=2, remove_invalid_values=True)
+    assert len(group) == 2 and all(s.completion_ids for s in group)
+
+
+def test_input_ids_go_where_the_embedding_layer_is(model):
+    from kernelgen.modeling import input_device
+
+    assert input_device(model) == model.get_input_embeddings().weight.device
 
 
 def test_multiple_updates_per_batch_use_the_clipped_ratio(tok, model, tmp_path):
