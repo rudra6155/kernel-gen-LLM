@@ -1,0 +1,23 @@
+{
+ "examples": 631,
+ "train": 571,
+ "val": 60,
+ "dropped_too_long": 0,
+ "per_family": {
+  "attention": 108,
+  "gemm": 72,
+  "gemm_bias_relu": 90,
+  "layernorm": 130,
+  "rmsnorm": 101,
+  "softmax": 130
+ },
+ "tasks": 119,
+ "unmeasured_examples": 0,
+ "speedup_min_median_max": [
+  1.0,
+  2.086805555045177,
+  9.857477735784325
+ ],
+ "train_tokens": 458198,
+ "longest_example_tokens": 1031
+}

@@ -1,0 +1,110 @@
+{
+ "n_tasks": 50,
+ "n_tasks_evaluated": 50,
+ "n_samples": 200,
+ "status_counts": {
+  "ok": 185,
+  "incorrect": 9,
+  "error": 6
+ },
+ "frac_samples_with_code": 1.0,
+ "frac_samples_correct": 0.925,
+ "pass_at_1": 0.96,
+ "pass_at_k": 1.0,
+ "tasks_with_a_correct_sample": 50,
+ "tasks_where_best_beats_baseline": 47,
+ "best_of_k_speedup_geomean": 2.3904641776150357,
+ "mean_speedup_of_correct_samples": 2.705127643645933,
+ "tasks_where_best_beats_library": 30,
+ "tasks_with_a_library_comparison": 42,
+ "best_of_k_speedup_vs_library_geomean": 1.0469337259738754,
+ "per_family": {
+  "attention": {
+   "tasks": 10,
+   "pass_at_k": 1.0,
+   "best_of_k_speedup_geomean": 3.4086100006367634
+  },
+  "gemm": {
+   "tasks": 8,
+   "pass_at_k": 1.0,
+   "best_of_k_speedup_geomean": 0.9257090999584406
+  },
+  "gemm_bias_relu": {
+   "tasks": 8,
+   "pass_at_k": 1.0,
+   "best_of_k_speedup_geomean": 1.3606837821395996
+  },
+  "layernorm": {
+   "tasks": 8,
+   "pass_at_k": 1.0,
+   "best_of_k_speedup_geomean": 5.223223939891166
+  },
+  "rmsnorm": {
+   "tasks": 8,
+   "pass_at_k": 1.0,
+   "best_of_k_speedup_geomean": 2.853985432390795
+  },
+  "softmax": {
+   "tasks": 8,
+   "pass_at_k": 1.0,
+   "best_of_k_speedup_geomean": 2.667904120066035
+  }
+ },
+ "config": {
+  "tag": "sft",
+  "adapter": "runs/sft/final",
+  "model_name": "Qwen/Qwen2.5-Coder-3B-Instruct",
+  "tokenizer_name": null,
+  "tasks_file": "data/heldout_tasks.json",
+  "out_dir": "results",
+  "quantize": true,
+  "samples_per_task": 4,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "max_new_tokens": 1024,
+  "warmup": 10,
+  "reps": 100,
+  "seeds": 3,
+  "timeout": 120.0,
+  "limit_tasks": null,
+  "profile_slow": 3
+ },
+ "slow_kernels": [
+  {
+   "candidate_id": "gen:sft:gemm_bias_relu_M1000_N1000_K1000_float16:1",
+   "task": "gemm_bias_relu_M1000_N1000_K1000_float16",
+   "speedup": 0.21739129403219642,
+   "observations": [
+    "GPU kernel time per call: candidate 0.6719 ms, baseline 0.1413 ms (4.76x the baseline's)",
+    "kernel launches per call: candidate 1, baseline 3",
+    "effective bandwidth: candidate 8.9 GB/s, baseline 42.5 GB/s (4% and 19% of the 227 GB/s measured for a plain copy)",
+    "the candidate reaches 4% of the measured copy bandwidth, so it is not limited by memory bandwidth",
+    "longest candidate kernel: _matmul averaging 671.9 us (grid [128, 1, 1], block [128, 1, 1], registers per thread 255, shared memory 24576, est. achieved occupancy % 17)"
+   ]
+  },
+  {
+   "candidate_id": "gen:sft:gemm_M1000_N1000_K1000_float16:0",
+   "task": "gemm_M1000_N1000_K1000_float16",
+   "speedup": 0.4712181783411335,
+   "observations": [
+    "GPU kernel time per call: candidate 0.2680 ms, baseline 0.1204 ms (2.23x the baseline's)",
+    "kernel launches per call: candidate 1, baseline 1",
+    "effective bandwidth: candidate 22.4 GB/s, baseline 49.8 GB/s (10% and 22% of the 229 GB/s measured for a plain copy)",
+    "the candidate reaches 10% of the measured copy bandwidth, so it is not limited by memory bandwidth",
+    "longest candidate kernel: _matmul averaging 268.0 us (grid [1024, 1, 1], block [128, 1, 1], registers per thread 80, shared memory 4096, est. achieved occupancy % 50)"
+   ]
+  },
+  {
+   "candidate_id": "gen:sft:gemm_M1000_N1000_K1000_float16:2",
+   "task": "gemm_M1000_N1000_K1000_float16",
+   "speedup": 0.4807692247896471,
+   "observations": [
+    "GPU kernel time per call: candidate 0.2465 ms, baseline 0.1203 ms (2.05x the baseline's)",
+    "kernel launches per call: candidate 1, baseline 1",
+    "effective bandwidth: candidate 24.3 GB/s, baseline 49.9 GB/s (11% and 22% of the 227 GB/s measured for a plain copy)",
+    "the candidate reaches 11% of the measured copy bandwidth, so it is not limited by memory bandwidth",
+    "longest candidate kernel: _matmul averaging 246.5 us (grid [64, 1, 1], block [128, 1, 1], registers per thread 255, shared memory 32768, est. achieved occupancy % 17)"
+   ]
+  }
+ ]
+}

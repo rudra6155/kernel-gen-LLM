@@ -1,0 +1,73 @@
+{
+ "n_tasks": 50,
+ "n_tasks_evaluated": 50,
+ "n_samples": 200,
+ "status_counts": {
+  "error": 74,
+  "rejected": 121,
+  "no_code": 5
+ },
+ "frac_samples_with_code": 0.975,
+ "frac_samples_correct": 0.0,
+ "pass_at_1": 0.0,
+ "pass_at_k": 0.0,
+ "tasks_with_a_correct_sample": 0,
+ "tasks_where_best_beats_baseline": 0,
+ "best_of_k_speedup_geomean": null,
+ "mean_speedup_of_correct_samples": null,
+ "tasks_where_best_beats_library": 0,
+ "tasks_with_a_library_comparison": 0,
+ "best_of_k_speedup_vs_library_geomean": null,
+ "per_family": {
+  "attention": {
+   "tasks": 10,
+   "pass_at_k": 0.0,
+   "best_of_k_speedup_geomean": null
+  },
+  "gemm": {
+   "tasks": 8,
+   "pass_at_k": 0.0,
+   "best_of_k_speedup_geomean": null
+  },
+  "gemm_bias_relu": {
+   "tasks": 8,
+   "pass_at_k": 0.0,
+   "best_of_k_speedup_geomean": null
+  },
+  "layernorm": {
+   "tasks": 8,
+   "pass_at_k": 0.0,
+   "best_of_k_speedup_geomean": null
+  },
+  "rmsnorm": {
+   "tasks": 8,
+   "pass_at_k": 0.0,
+   "best_of_k_speedup_geomean": null
+  },
+  "softmax": {
+   "tasks": 8,
+   "pass_at_k": 0.0,
+   "best_of_k_speedup_geomean": null
+  }
+ },
+ "config": {
+  "tag": "base",
+  "adapter": null,
+  "model_name": "Qwen/Qwen2.5-Coder-3B-Instruct",
+  "tokenizer_name": null,
+  "tasks_file": "data/heldout_tasks.json",
+  "out_dir": "results",
+  "quantize": true,
+  "samples_per_task": 4,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "max_new_tokens": 1024,
+  "warmup": 10,
+  "reps": 100,
+  "seeds": 3,
+  "timeout": 120.0,
+  "limit_tasks": null,
+  "profile_slow": 3
+ },
+ "slow_kernels": []
+}

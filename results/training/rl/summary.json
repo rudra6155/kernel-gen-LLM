@@ -1,0 +1,6 @@
+{
+ "status": "completed",
+ "reason": null,
+ "steps_run": 100,
+ "reward_curve": "runs/rl/reward_curve.csv"
+}
