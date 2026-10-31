@@ -1,0 +1,1 @@
+{"tools_found": {"ncu": null, "nsys": null}, "runs": [], "note": "neither ncu nor nsys was found on PATH under WSL2; no Nsight profile was produced"}

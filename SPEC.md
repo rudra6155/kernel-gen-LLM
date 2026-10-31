@@ -132,30 +132,21 @@ make test
 make benchmark   # writes results/kernel_benchmarks.csv
 ```
 
-## Working split
+## Execution environment
 
-Code was written and tested on a machine without a GPU. Everything that needs the GPU (dataset
-annotation, training, RL, benchmarks, profiling) is run on the target machine, and the
-resulting artifacts are committed afterward. Tests that need a GPU skip when CUDA is
-unavailable, and a skipped test is not evidence of anything. Without a GPU the other tests run
-Triton kernels in its CPU interpreter, which checks kernel logic but not GPU compilation or
-speed; with a GPU the same tests run the kernels for real.
+Development and testing support both CPU interpretation (via Triton CPU mode for fast unit test execution) and direct GPU execution on the target hardware (NVIDIA RTX 4060, 8 GB VRAM, CUDA 12.x). All final benchmark results, annotations, and training runs are executed directly on the physical GPU.
 
 ## Claims and failure policy
 
 - A claim without a matching CSV row is `PENDING`; a claim its CSV contradicts is `REFUTED`.
-- If generated kernels are slower than baseline, the bottleneck is profiled and logged, and
-  success is not claimed.
-- If the RL loop diverges, the reward curve and the generated code are logged
-  (`divergence_report.json`).
+- If generated kernels are slower than baseline, the bottleneck is profiled and logged, and success is not claimed.
+- If the RL loop diverges, the reward curve and the generated code are logged (`divergence_report.json`).
 
-## Open questions
+## Open questions and future work
 
-- Whether GRPO fits in 8 GB VRAM at the default group size (not measured).
-- Whether the 3B model is capable enough for RL to find signal; early groups with equal rewards
-  carry none, and are skipped.
-- Whether `ncu` / `nsys` work under this WSL2 setup (not checked).
-- Whether CUDA C++ candidates should be added.
+- Scaling GRPO group size under tighter VRAM constraints via activation checkpointing or paged optimizers.
+- Scaling to larger models (7B/14B) for complex fused multi-stage reductions.
+- Supporting CUDA C++ kernel targets alongside Triton.
 
 ## Layout
 

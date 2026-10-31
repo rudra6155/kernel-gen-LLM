@@ -34,17 +34,4 @@ outputs/
 .DS_Store
 Thumbs.db
 
-# LLM tooling config
-.claude/
-.antigravity/
-.cursor/
-.cursorrules
-.windsurfrules
-.aider*
-.codex/
-.gemini/
-.continue/
-CLAUDE.md
-AGENTS.md
-GEMINI.md
-.github/copilot-instructions.md
+
