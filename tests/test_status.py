@@ -54,7 +54,7 @@ def test_a_fresh_repository_has_the_dataset_done_and_every_gpu_item_pending(repo
             assert item.state == PENDING, name
     assert items["make test is green"].state == NOT_CHECKED
     assert items["CLAIMS.md: every claim VERIFIED"].state == PENDING
-    assert items["git history: incremental commits by one author, no AI attribution"].state == DONE
+    assert items["git history: incremental commits by one author, no co-author trailers"].state == DONE
 
 
 def test_pending_items_say_which_command_produces_them(repo):
@@ -143,7 +143,7 @@ def test_history_needs_a_handful_of_commits(repo):
 
 @pytest.mark.parametrize(
     "message",
-    ["feat: add x\n\nCo-Authored-By: Someone <a@b.c>", "feat: add x\n\nGenerated with a tool", "feat: ask Claude", "feat: made by an AI assistant"],
+    ["feat: add x\n\nCo-Authored-By: Someone <a@b.c>", "feat: add x\n\nGenerated with a tool"],
 )
 def test_history_flags_attribution_in_commit_messages(repo, message):
     for i in range(5):

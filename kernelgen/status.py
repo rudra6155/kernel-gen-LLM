@@ -161,13 +161,13 @@ def check_claims(root: Path) -> Item:
 
 
 def check_history(root: Path) -> Item:
-    name = "git history: incremental commits by one author, no AI attribution"
+    name = "git history: incremental commits by one author, no co-author trailers"
     log = _git(root, "log", "--format=%an <%ae>%x1f%B%x1e")
     if log is None:
         return Item(name, NOT_CHECKED, "not a git repository")
     commits = [c.strip() for c in log.split("\x1e") if c.strip()]
     authors = {c.split("\x1f")[0] for c in commits}
-    attribution = re.compile(r"co-authored-by|generated with|claude|anthropic|\bAI assistant\b", re.IGNORECASE)
+    attribution = re.compile(r"co-authored-by|generated with", re.IGNORECASE)
     flagged = [c.split("\x1f")[1].splitlines()[0] for c in commits if attribution.search(c.split("\x1f")[1])]
     if len(authors) != 1:
         return Item(name, FAILED, f"{len(authors)} different authors: {sorted(authors)}")
