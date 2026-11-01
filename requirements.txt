@@ -14,3 +14,6 @@ accelerate>=0.34  # device_map loading
 
 # Tests
 pytest
+
+# Figures (make figures)
+matplotlib

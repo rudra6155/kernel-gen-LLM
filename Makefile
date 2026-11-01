@@ -1,7 +1,7 @@
 PYTHON ?= python3
 RESULTS := results
 
-.PHONY: install test benchmark profile dataset annotate verify-dataset sft rl eval-model nsight collect-logs claims claims-check status
+.PHONY: figures install test benchmark profile dataset annotate verify-dataset sft rl eval-model nsight collect-logs claims claims-check status
 
 # Run inside an activated virtualenv, e.g.:
 #   python3 -m venv .venv && . .venv/bin/activate
@@ -75,3 +75,7 @@ claims-check:
 # The Definition of Done checklist, computed from the repository. Add --run-tests via STATUS_ARGS.
 status:
 	$(PYTHON) -m kernelgen.status $(STATUS_ARGS)
+
+# Rewrite the results tables in README.md and the figures in docs/img/ from the committed CSVs.
+figures:
+	$(PYTHON) -m kernelgen.figures
